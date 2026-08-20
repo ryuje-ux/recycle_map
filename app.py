@@ -4,54 +4,16 @@ import folium
 from folium.plugins import HeatMap, MarkerCluster
 from streamlit_folium import st_folium
 import math
-import sqlite3
 import os
 
 # 페이지 기본 설정
 st.set_page_config(
-    page_title="UpBox 전국 고객사 & 처리장 통합 분석 시스템",
+    page_title="UpBox 전국 고객사 & 처리장 분석 시스템",
     page_icon="🗺️",
     layout="wide"
 )
 
-# ==========================================
-# 0. SQLite 데이터베이스(DB) 연동 및 관리
-# ==========================================
-DB_FILE = "upbox_data.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # 고객사 테이블 생성
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_name TEXT,
-            address TEXT,
-            waste_type TEXT,
-            partner_name TEXT,
-            vehicle_type TEXT,
-            work_volume REAL,
-            monthly_volume REAL,
-            latitude REAL,
-            longitude REAL
-        )
-    ''')
-    # 처리장 테이블 생성
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS facilities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            facility_name TEXT,
-            address TEXT,
-            waste_type TEXT,
-            latitude REAL,
-            longitude REAL
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
+st.title("🗺️ UpBox 운영 분석 & 처리장 동선 추천 시스템")
 
 # 전국 시/군/구 및 읍/면/동 상세 좌표 딕셔너리
 REGION_COORDS = {
@@ -107,21 +69,6 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c, 2)
 
-# DB 조회 함수
-def get_db_customers():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM customers", conn)
-    conn.close()
-    return df
-
-def get_db_facilities():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM facilities", conn)
-    conn.close()
-    return df
-
-st.title("🗺️ UpBox 운영 분석 & 처리장 동선 추천 시스템")
-
 # 메인 탭 구성
 tab1, tab2 = st.tabs(["🗺️ 1. 고객사 히트맵 & 작업량 분석", "🚚 2. 신규 업장 ➔ 최단 처리장 동선 추천"])
 
@@ -131,103 +78,73 @@ tab1, tab2 = st.tabs(["🗺️ 1. 고객사 히트맵 & 작업량 분석", "🚚
 with tab1:
     st.subheader("📊 전국 고객사 배출 작업량 히트맵 분석")
     
-    with st.expander("📥 고객사 데이터 관리 (신규 직접 등록 / 엑셀 업로드)"):
-        c1, c2 = st.columns([1, 1])
+    # 저장소 내 자동 감지 또는 임시 업로드
+    file_path = "customer_data.xlsx"
+    cust_file = None
+    
+    if os.path.exists(file_path):
+        cust_file = file_path
+    else:
+        uploaded_c = st.file_uploader("📂 [고객사 엑셀 파일] 업로드 (저장소에 'customer_data.xlsx'가 등록되어 있으면 자동 로딩됩니다)", type=["xlsx", "xls"], key="c_up")
+        if uploaded_c:
+            cust_file = uploaded_c
+
+    @st.cache_data
+    def load_customer_data(file):
+        df = pd.read_excel(file)
+        addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소' if '✔️배출계약_Master - 고객사ID → 고객사 주소' in df.columns else df.columns[1]
         
-        with c1:
-            st.markdown("##### ✍️ 웹에서 신규 고객사 직접 추가")
-            with st.form("add_cust_form", clear_on_submit=True):
-                new_name = st.text_input("고객사명", "롯데쇼핑(주) 신규점")
-                new_addr = st.text_input("고객사 주소", "서울 강남구 테헤란로 100")
-                new_waste = st.text_input("폐기물 종류", "[51-03-01]폐합성수지류")
-                new_partner = st.text_input("운영파트너명", "UpBox강남")
-                new_vehicle = st.text_input("차량 종류", "[50]집게차")
-                new_vol = st.number_input("최근 12개월 누적 작업량 (kg)", value=120000.0)
-                
-                submitted = st.form_submit_button("💾 데이터베이스에 저장")
-                if submitted:
-                    monthly = round(new_vol / 12.0, 1)
-                    lat, lng = get_fast_coordinates(new_addr)
-                    
-                    conn = sqlite3.connect(DB_FILE)
-                    cur = conn.cursor()
-                    cur.execute('''
-                        INSERT INTO customers (customer_name, address, waste_type, partner_name, vehicle_type, work_volume, monthly_volume, latitude, longitude)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (new_name, new_addr, new_waste, new_partner, new_vehicle, new_vol, monthly, lat, lng))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ '{new_name}' 데이터가 DB에 성공적으로 저장되었습니다!")
-                    st.rerun()
+        df['고객사명'] = df[df.columns[0]].astype(str).str.strip()
+        df[addr_col] = df[addr_col].fillna('주소 미입력')
+        df['차량종류'] = df['차량종류'].fillna('미지정') if '차량종류' in df.columns else '미지정'
+        df['운영파트너명'] = df['운영파트너명'].fillna('미지정') if '운영파트너명' in df.columns else '미지정'
+        df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정') if '폐기물종류소분류' in df.columns else '미지정'
+        
+        vol_col = '작업량의 합계' if '작업량의 합계' in df.columns else df.columns[-1]
+        df['작업량의 합계'] = pd.to_numeric(df[vol_col], errors='coerce').fillna(0)
+        df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
+        
+        coords = [get_fast_coordinates(a) for a in df[addr_col]]
+        df['latitude'] = [c[0] for c in coords]
+        df['longitude'] = [c[1] for c in coords]
+        return df, addr_col
 
-        with c2:
-            st.markdown("##### 📂 엑셀 파일 데이터 일괄 저장 (DB Import)")
-            cust_file = st.file_uploader("고객사 엑셀 파일(.xlsx) Upload", type=["xlsx", "xls"], key="cust_db_import")
-            if cust_file is not None and st.button("📥 DB로 일괄 저장하기"):
-                df_excel = pd.read_excel(cust_file)
-                addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소' if '✔️배출계약_Master - 고객사ID → 고객사 주소' in df_excel.columns else df_excel.columns[1]
-                vol_col = '작업량의 합계' if '작업량의 합계' in df_excel.columns else df_excel.columns[-1]
-                
-                conn = sqlite3.connect(DB_FILE)
-                cur = conn.cursor()
-                for _, row in df_excel.iterrows():
-                    c_name = str(row[df_excel.columns[0]]).strip()
-                    c_addr = str(row[addr_col]) if pd.notnull(row[addr_col]) else '주소 미입력'
-                    c_waste = str(row['폐기물종류소분류']) if '폐기물종류소분류' in df_excel.columns and pd.notnull(row['폐기물종류소분류']) else '미지정'
-                    c_partner = str(row['운영파트너명']) if '운영파트너명' in df_excel.columns and pd.notnull(row['운영파트너명']) else '미지정'
-                    c_vehicle = str(row['차량종류']) if '차량종류' in df_excel.columns and pd.notnull(row['차량종류']) else '미지정'
-                    
-                    w_vol = pd.to_numeric(row[vol_col], errors='coerce')
-                    w_vol = 0.0 if pd.isna(w_vol) else float(w_vol)
-                    m_vol = round(w_vol / 12.0, 1)
-                    lat, lng = get_fast_coordinates(c_addr)
-                    
-                    cur.execute('''
-                        INSERT INTO customers (customer_name, address, waste_type, partner_name, vehicle_type, work_volume, monthly_volume, latitude, longitude)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (c_name, c_addr, c_waste, c_partner, c_vehicle, w_vol, m_vol, lat, lng))
-                conn.commit()
-                conn.close()
-                st.success("🎉 엑셀 데이터가 DB로 일괄 저장되었습니다!")
-                st.rerun()
-
-    # DB에서 최신 데이터 가져오기
-    df_cust = get_db_customers()
-
-    if not df_cust.empty:
+    if cust_file is not None:
+        df, addr_col = load_customer_data(cust_file)
+        
         st.sidebar.header("🔍 [탭1] 고객사 필터링")
         search_query = st.sidebar.text_input("고객사명 / 주소 검색", "", key="search_cust")
         
-        all_partners = ["전체"] + sorted(df_cust['partner_name'].dropna().unique().tolist())
+        all_partners = ["전체"] + sorted(df['운영파트너명'].unique().tolist())
         selected_partner = st.sidebar.selectbox("운영파트너 선택", all_partners)
         
-        all_wastes = ["전체"] + sorted(df_cust['waste_type'].dropna().unique().tolist())
+        all_wastes = ["전체"] + sorted(df['폐기물종류소분류'].unique().tolist())
         selected_waste = st.sidebar.selectbox("폐기물종류 선택", all_wastes)
         
-        all_vehicles = ["전체"] + sorted(df_cust['vehicle_type'].dropna().unique().tolist())
+        all_vehicles = ["전체"] + sorted(df['차량종류'].unique().tolist())
         selected_vehicle = st.sidebar.selectbox("차량종류 선택", all_vehicles)
         
         map_mode = st.sidebar.radio("지도 표시 형태", ["월평균 작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
 
-        filtered_df = df_cust.copy()
+        filtered_df = df.copy()
         if selected_partner != "전체":
-            filtered_df = filtered_df[filtered_df['partner_name'] == selected_partner]
+            filtered_df = filtered_df[filtered_df['운영파트너명'] == selected_partner]
         if selected_waste != "전체":
-            filtered_df = filtered_df[filtered_df['waste_type'] == selected_waste]
+            filtered_df = filtered_df[filtered_df['폐기물종류소분류'] == selected_waste]
         if selected_vehicle != "전체":
-            filtered_df = filtered_df[filtered_df['vehicle_type'] == selected_vehicle]
+            filtered_df = filtered_df[filtered_df['차량종류'] == selected_vehicle]
             
         if search_query:
             filtered_df = filtered_df[
-                filtered_df['customer_name'].str.contains(search_query, case=False) |
-                filtered_df['address'].str.contains(search_query, case=False)
+                filtered_df['고객사명'].str.contains(search_query, case=False) |
+                filtered_df[addr_col].str.contains(search_query, case=False)
             ]
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("선택된 고객사 수", f"{filtered_df['customer_name'].nunique():,} 개")
+        col1.metric("선택된 고객사 수", f"{filtered_df['고객사명'].nunique():,} 개")
         col2.metric("선택된 계약 건수", f"{len(filtered_df):,} 건")
-        col3.metric("월평균 수거량 합계", f"{filtered_df['monthly_volume'].sum():,.1f} kg/월")
-        col4.metric("12개월 누적 총 작업량", f"{filtered_df['work_volume'].sum():,.0f} kg")
+        col3.metric("월평균 수거량 합계", f"{filtered_df['월평균수거량'].sum():,.1f} kg/월")
+        col4.metric("12개월 누적 총 작업량", f"{filtered_df['작업량의 합계'].sum():,} kg")
 
         st.markdown("---")
 
@@ -238,21 +155,21 @@ with tab1:
         m1 = folium.Map(location=[center_lat, center_lng], zoom_start=7, tiles="cartodbpositron")
 
         if map_mode in ["월평균 작업량 히트맵", "전체 레이어 함께 보기"]:
-            heat_data = [[row['latitude'], row['longitude'], row['monthly_volume']] for _, row in valid_coords_df.iterrows() if row['monthly_volume'] > 0]
+            heat_data = [[row['latitude'], row['longitude'], row['월평균수거량']] for _, row in valid_coords_df.iterrows() if row['월평균수거량'] > 0]
             if heat_data:
                 HeatMap(heat_data, radius=25, blur=15, max_zoom=10).add_to(m1)
 
         if map_mode in ["고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"]:
             marker_cluster = MarkerCluster().add_to(m1)
-            customer_summary = valid_coords_df.groupby(['customer_name', 'address', 'latitude', 'longitude']).agg(
-                total_monthly_vol=('monthly_volume', 'sum')
+            customer_summary = valid_coords_df.groupby(['고객사명', addr_col, 'latitude', 'longitude']).agg(
+                total_monthly_vol=('월평균수거량', 'sum')
             ).reset_index()
 
             for _, row in customer_summary.iterrows():
                 folium.Marker(
                     location=[row['latitude'], row['longitude']],
-                    popup=f"<b>{row['customer_name']}</b><br>월평균: {row['total_monthly_vol']:,.1f} kg/월",
-                    tooltip=row['customer_name']
+                    popup=f"<b>{row['고객사명']}</b><br>월평균: {row['total_monthly_vol']:,.1f} kg/월",
+                    tooltip=row['고객사명']
                 ).add_to(marker_cluster)
 
         map_data1 = st_folium(m1, width="100%", height=500, returned_objects=["last_object_clicked_tooltip"], key="map1")
@@ -260,17 +177,14 @@ with tab1:
         clicked_customer = map_data1.get("last_object_clicked_tooltip")
         if clicked_customer:
             st.subheader(f"📍 선택한 업장 상세 정보: [{clicked_customer}]")
-            display_df = filtered_df[filtered_df['customer_name'] == clicked_customer]
+            display_df = filtered_df[filtered_df['고객사명'] == clicked_customer]
         else:
-            st.subheader("📊 선택 조건 전체 DB 데이터 목록")
+            st.subheader("📊 선택 조건 전체 데이터 목록")
             display_df = filtered_df
 
-        st.dataframe(
-            display_df[['id', 'customer_name', 'address', 'waste_type', 'partner_name', 'vehicle_type', 'monthly_volume', 'work_volume']],
-            use_container_width=True
-        )
+        st.dataframe(display_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']], use_container_width=True)
     else:
-        st.info("💡 등록된 고객사 데이터가 없습니다. 상단 [고객사 데이터 관리]를 눌러 신규 추가하거나 엑셀을 업로드해주세요.")
+        st.info("💡 GitHub 저장소에 'customer_data.xlsx' 파일이 업로드되면 자동으로 지도가 표시됩니다.")
 
 
 # ==========================================
@@ -279,115 +193,96 @@ with tab1:
 with tab2:
     st.subheader("🚚 신규 운영 검토 업장 ➔ 최단 동선 처리장 추천")
     
-    with st.expander("📥 처리장 데이터 관리 (신규 등록 / 엑셀 업로드)"):
-        fc1, fc2 = st.columns([1, 1])
-        
-        with fc1:
-            st.markdown("##### ✍️ 웹에서 신규 처리장 직접 추가")
-            with st.form("add_facility_form", clear_on_submit=True):
-                f_name = st.text_input("처리장명", "UpBox 남양주 리싸이클링")
-                f_addr = st.text_input("처리장 주소", "경기 남양주시 오남읍 양지로 20")
-                f_type = st.text_input("폐기물 구분/종류", "[51-28]폐지류 / 재활용")
-                
-                f_submitted = st.form_submit_button("💾 처리장 DB에 저장")
-                if f_submitted:
-                    f_lat, f_lng = get_fast_coordinates(f_addr)
-                    conn = sqlite3.connect(DB_FILE)
-                    cur = conn.cursor()
-                    cur.execute('''
-                        INSERT INTO facilities (facility_name, address, waste_type, latitude, longitude)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (f_name, f_addr, f_type, f_lat, f_lng))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ 처리장 '{f_name}' 저장 완료!")
-                    st.rerun()
-
-        with fc2:
-            st.markdown("##### 📂 처리장 엑셀 파일 일괄 저장")
-            facility_file = st.file_uploader("처리장 엑셀 파일 Upload", type=["xlsx", "xls"], key="facility_db_import")
-            if facility_file is not None and st.button("📥 처리장 DB 일괄 저장"):
-                raw_f_df = pd.read_excel(facility_file)
-                name_col = 'company_name' if 'company_name' in raw_f_df.columns else ('처리장명' if '처리장명' in raw_f_df.columns else raw_f_df.columns[0])
-                addr_col = 'working_spot_address' if 'working_spot_address' in raw_f_df.columns else ('주소' if '주소' in raw_f_df.columns else raw_f_df.columns[1])
-                type_col = 'waste_type' if 'waste_type' in raw_f_df.columns else ('구분' if '구분' in raw_f_df.columns else raw_f_df.columns[-1])
-                
-                conn = sqlite3.connect(DB_FILE)
-                cur = conn.cursor()
-                for _, row in raw_f_df.iterrows():
-                    fn = str(row[name_col]).strip()
-                    fa = str(row[addr_col]) if pd.notnull(row[addr_col]) else '주소 미입력'
-                    ft = str(row[type_col]) if pd.notnull(row[type_col]) else '미지정'
-                    flat, flng = get_fast_coordinates(fa)
-                    
-                    cur.execute('''
-                        INSERT INTO facilities (facility_name, address, waste_type, latitude, longitude)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (fn, fa, ft, flat, flng))
-                conn.commit()
-                conn.close()
-                st.success("🎉 처리장 데이터가 DB로 일괄 저장되었습니다!")
-                st.rerun()
-
     col_input, col_info = st.columns([1, 1])
+    
     with col_input:
+        st.markdown("#### 1️⃣ 신규 검토 업장 정보")
         target_address = st.text_input("신규 검토 업장 주소 입력 후 엔터", "경기 남양주시 오남읍 오남리 554-2")
         top_k = st.slider("추천받을 최단 거리 처리장 수", min_value=3, max_value=20, value=10)
 
-    # DB에서 처리장 목록 읽기
-    df_fac = get_db_facilities()
-
-    if not df_fac.empty:
-        target_lat, target_lng = get_fast_coordinates(target_address)
-
-        df_fac['직선거리_km'] = [
-            haversine_distance(target_lat, target_lng, row['latitude'], row['longitude'])
-            for _, row in df_fac.iterrows()
-        ]
-
-        top_facilities = df_fac.sort_values(by='직선거리_km').head(top_k).reset_index(drop=True)
-        top_facilities['순위'] = top_facilities.index + 1
-
-        st.markdown("---")
-        st.markdown(f"### 🗺️ [{target_address}] 기준 최단 거리 처리장 Top {top_k} 동선 지도")
+    with col_info:
+        st.markdown("#### 2️⃣ 처리장 데이터 정보")
+        f_path = "facility_data.xlsx"
+        facility_file = None
         
-        m2 = folium.Map(location=[target_lat, target_lng], zoom_start=9, tiles="cartodbpositron")
+        if os.path.exists(f_path):
+            st.success("✅ GitHub 저장소의 'facility_data.xlsx' 파일이 자동 로딩되었습니다.")
+            facility_file = f_path
+        else:
+            uploaded_f = st.file_uploader("📂 [처리장 엑셀 파일] 업로드 (저장소에 'facility_data.xlsx'가 없으면 여기에 올려주세요)", type=["xlsx", "xls"], key="f_up")
+            if uploaded_f:
+                facility_file = uploaded_f
 
-        # 출발지
+    if facility_file is not None:
+        raw_f_df = pd.read_excel(facility_file)
+        
+        name_col = 'company_name' if 'company_name' in raw_f_df.columns else ('처리장명' if '처리장명' in raw_f_df.columns else raw_f_df.columns[0])
+        addr_col = 'working_spot_address' if 'working_spot_address' in raw_f_df.columns else ('주소' if '주소' in raw_f_df.columns else raw_f_df.columns[1])
+        type_col = 'waste_type' if 'waste_type' in raw_f_df.columns else ('구분' if '구분' in raw_f_df.columns else raw_f_df.columns[-1])
+        
+        facility_df = pd.DataFrame({
+            '처리장명': raw_f_df[name_col],
+            '주소': raw_f_df[addr_col],
+            '구분': raw_f_df[type_col]
+        })
+    else:
+        facility_data = [
+            {"처리장명": "UpBox 화성 처리장", "주소": "경기 화성시 장안면", "구분": "소각/재활용"},
+            {"처리장명": "UpBox 청주 리싸이클링", "주소": "충북 청주시 흥덕구", "구분": "재활용"},
+            {"처리장명": "UpBox 하남 자원", "주소": "경기 하남시 풍산동", "구분": "수집운반/선별"}
+        ]
+        facility_df = pd.DataFrame(facility_data)
+
+    f_coords = [get_fast_coordinates(a) for a in facility_df['주소']]
+    facility_df['latitude'] = [c[0] for c in f_coords]
+    facility_df['longitude'] = [c[1] for c in f_coords]
+
+    target_lat, target_lng = get_fast_coordinates(target_address)
+
+    facility_df['직선거리_km'] = [
+        haversine_distance(target_lat, target_lng, row['latitude'], row['longitude'])
+        for _, row in facility_df.iterrows()
+    ]
+
+    top_facilities = facility_df.sort_values(by='직선거리_km').head(top_k).reset_index(drop=True)
+    top_facilities['순위'] = top_facilities.index + 1
+
+    st.markdown("---")
+    st.markdown(f"### 🗺️ [{target_address}] 기준 최단 거리 처리장 Top {top_k} 동선 지도")
+    
+    m2 = folium.Map(location=[target_lat, target_lng], zoom_start=9, tiles="cartodbpositron")
+
+    folium.Marker(
+        location=[target_lat, target_lng],
+        popup=f"<b>🏢 신규 검토 업장</b><br>{target_address}",
+        tooltip="🏢 신규 검토 업장 (출발지)",
+        icon=folium.Icon(color="green", icon="play", prefix="fa")
+    ).add_to(m2)
+
+    for _, row in top_facilities.iterrows():
+        f_lat, f_lng = row['latitude'], row['longitude']
+        rank = row['순위']
+        dist = row['직선거리_km']
+        
         folium.Marker(
-            location=[target_lat, target_lng],
-            popup=f"<b>🏢 신규 검토 업장</b><br>{target_address}",
-            tooltip="🏢 신규 검토 업장 (출발지)",
-            icon=folium.Icon(color="green", icon="play", prefix="fa")
+            location=[f_lat, f_lng],
+            popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b><br>폐기물: {row['구분']}",
+            tooltip=f"{rank}위. {row['처리장명']} ({dist}km)",
+            icon=folium.Icon(color="red", icon="info-sign")
         ).add_to(m2)
 
-        # 도착지 및 동선
-        for _, row in top_facilities.iterrows():
-            f_lat, f_lng = row['latitude'], row['longitude']
-            rank = row['순위']
-            dist = row['직선거리_km']
-            
-            folium.Marker(
-                location=[f_lat, f_lng],
-                popup=f"<b>{rank}위: {row['facility_name']}</b><br>📍 {row['address']}<br>📏 거리: <b>{dist} km</b><br>폐기물: {row['waste_type']}",
-                tooltip=f"{rank}위. {row['facility_name']} ({dist}km)",
-                icon=folium.Icon(color="red", icon="info-sign")
-            ).add_to(m2)
+        folium.PolyLine(
+            locations=[[target_lat, target_lng], [f_lat, f_lng]],
+            color="#e74c3c" if rank == 1 else "#3498db",
+            weight=3 if rank == 1 else 1.5,
+            opacity=0.8 if rank == 1 else 0.5,
+            dash_array='5, 5'
+        ).add_to(m2)
 
-            folium.PolyLine(
-                locations=[[target_lat, target_lng], [f_lat, f_lng]],
-                color="#e74c3c" if rank == 1 else "#3498db",
-                weight=3 if rank == 1 else 1.5,
-                opacity=0.8 if rank == 1 else 0.5,
-                dash_array='5, 5'
-            ).add_to(m2)
+    st_folium(m2, width="100%", height=500, key="map2")
 
-        st_folium(m2, width="100%", height=500, key="map2")
-
-        st.subheader(f"📊 최단 거리 처리장 추천 목록 (가장 가까운 순서)")
-        st.dataframe(
-            top_facilities[['순위', 'facility_name', '직선거리_km', 'address', 'waste_type']],
-            use_container_width=True
-        )
-    else:
-        st.info("💡 등록된 처리장 DB 데이터가 없습니다. 상단 [처리장 데이터 관리]를 열어 엑셀 업로드 또는 직접 등록을 먼저 해주세요.")
+    st.subheader(f"📊 최단 거리 처리장 추천 목록 (가장 가까운 순서)")
+    st.dataframe(
+        top_facilities[['순위', '처리장명', '직선거리_km', '주소', '구분']],
+        use_container_width=True
+    )

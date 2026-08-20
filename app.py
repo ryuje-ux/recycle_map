@@ -41,24 +41,25 @@ def get_fast_coordinates(addr):
             return lat, lng
     return 36.5, 127.5
 
-# 두 위경도 좌표 간의 거리(km) 계산 함수 (Haversine Formula)
 def haversine_distance(lat1, lon1, lat2, lon2):
-    R = 6371.0 # 지구 반지름 (km)
+    R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c, 2)
 
-# 메인 탭 구성을 통한 별도 페이지 기능 구현
-tab1, tab2 = st.tabs(["🗺️ 고객사 히트맵 & 분석", "🚚 신규 업장 ➔ 최단 처리장 동선 추천"])
+# 메인 탭 구성
+tab1, tab2 = st.tabs(["🗺️ 1. 고객사 히트맵 & 작업량 분석", "🚚 2. 신규 업장 ➔ 최단 처리장 동선 추천"])
 
 # ==========================================
 # TAB 1: 고객사 히트맵 & 분석
 # ==========================================
 with tab1:
-    st.sidebar.header("📁 [탭1] 고객사 데이터 업로드")
-    uploaded_file = st.sidebar.file_uploader("고객사 엑셀 파일(.xlsx)", type=["xlsx", "xls"], key="cust_file")
+    st.subheader("📊 전국 고객사 배출 작업량 히트맵 분석")
+    
+    # [독립 업로드 1] 고객사 전용 업로드 창
+    cust_file = st.file_uploader("📂 [고객사 데이터] 엑셀 파일(.xlsx)을 업로드하세요", type=["xlsx", "xls"], key="cust_upload")
 
     @st.cache_data
     def load_customer_data(file):
@@ -77,11 +78,12 @@ with tab1:
         df['longitude'] = [c[1] for c in coords]
         return df, addr_col
 
-    if uploaded_file is not None:
-        df, addr_col = load_customer_data(uploaded_file)
+    if cust_file is not None:
+        df, addr_col = load_customer_data(cust_file)
         
-        st.sidebar.subheader("🔍 조건 필터링")
-        search_query = st.sidebar.text_input("고객사명 / 주소 검색", "", key="search1")
+        # 필터 레이아웃
+        st.sidebar.header("🔍 [탭1] 고객사 필터링")
+        search_query = st.sidebar.text_input("고객사명 / 주소 검색", "", key="search_cust")
         
         all_partners = ["전체"] + sorted(df['운영파트너명'].unique().tolist())
         selected_partner = st.sidebar.selectbox("운영파트너 선택", all_partners)
@@ -152,31 +154,32 @@ with tab1:
 
         st.dataframe(display_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']], use_container_width=True)
     else:
-        st.info("👈 좌측 사이드바에서 고객사 엑셀 파일을 업로드해주세요.")
+        st.info("👆 위에 보유하고 계신 [고객사 데이터 엑셀 파일]을 업로드해주세요.")
 
 
 # ==========================================
 # TAB 2: 신규 업장 ➔ 최단 처리장 동선 추천
 # ==========================================
 with tab2:
-    st.header("🚚 신규 운영 검토 업장 최단 동선 처리장 추천")
+    st.subheader("🚚 신규 운영 검토 업장 ➔ 최단 동선 처리장 추천")
     
-    col_left, col_right = st.columns([1, 2])
+    col_input, col_facility = st.columns([1, 1])
     
-    with col_left:
-        st.subheader("1️⃣ 신규 검토 업장 주소 입력")
-        target_address = st.text_input("신규 업장 주소를 입력 후 엔터를 누르세요", "경기 화성시 장안면 북부마을길 42")
+    with col_input:
+        st.markdown("#### 1️⃣ 신규 검토 업장 정보")
+        target_address = st.text_input("신규 검토 업장 주소 입력 후 엔터", "경기 화성시 장안면 북부마을길 42")
         top_k = st.slider("추천받을 최단 거리 처리장 수", min_value=3, max_value=20, value=10)
 
-        st.subheader("2️⃣ 처리장 데이터 등록")
-        st.caption("처리장 데이터 엑셀을 업로드하시거나 기본 데이터셋을 사용합니다.")
-        facility_file = st.file_uploader("처리장 엑셀 업로드(선택사항)", type=["xlsx", "xls"], key="facility_file")
+    with col_facility:
+        st.markdown("#### 2️⃣ [처리장 전용 데이터] 등록")
+        # [독립 업로드 2] 처리장 전용 업로드 창
+        facility_file = st.file_uploader("📂 처리장 목록 엑셀(.xlsx) 업로드 (미업로드 시 기본 샘플 사용)", type=["xlsx", "xls"], key="facility_upload")
 
-    # 기본 처리장 데이터셋 구축 (업로드 없을 시 기본 적용)
+    # 처리장 데이터셋 생성
     if facility_file is not None:
         facility_df = pd.read_excel(facility_file)
     else:
-        # 내장 샘플 처리장 데이터셋
+        # 내장 기본 처리장 샘플 데이터셋
         facility_data = [
             {"처리장명": "UpBox 화성 처리장", "주소": "경기 화성시 장안면", "구분": "소각/재활용"},
             {"처리장명": "UpBox 청주 리싸이클링", "주소": "충북 청주시 흥덕구", "구분": "재활용"},
@@ -193,63 +196,54 @@ with tab2:
         ]
         facility_df = pd.DataFrame(facility_data)
 
-    # 처리장 좌표 생성
     f_coords = [get_fast_coordinates(addr) for addr in facility_df['주소']]
     facility_df['latitude'] = [c[0] for c in f_coords]
     facility_df['longitude'] = [c[1] for c in f_coords]
 
-    # 신규 업장 좌표 가져오기
     target_lat, target_lng = get_fast_coordinates(target_address)
 
-    # 최단 거리 계산
     facility_df['직선거리_km'] = [
         haversine_distance(target_lat, target_lng, row['latitude'], row['longitude'])
         for _, row in facility_df.iterrows()
     ]
 
-    # 최단거리 순으로 정렬하여 상위 Top-K 추출
     top_facilities = facility_df.sort_values(by='직선거리_km').head(top_k).reset_index(drop=True)
     top_facilities['순위'] = top_facilities.index + 1
 
-    with col_right:
-        st.subheader(f"🗺️ [{target_address}] 기준 최단 거리 처리장 Top {top_k} 동선 지도")
-        
-        m2 = folium.Map(location=[target_lat, target_lng], zoom_start=9, tiles="cartodbpositron")
+    st.markdown("---")
+    st.markdown(f"### 🗺️ [{target_address}] 기준 최단 거리 처리장 Top {top_k} 동선 지도")
+    
+    m2 = folium.Map(location=[target_lat, target_lng], zoom_start=9, tiles="cartodbpositron")
 
-        # 1. 출발지 신규 업장 마커 (초록색 아이콘)
+    folium.Marker(
+        location=[target_lat, target_lng],
+        popup=f"<b>🏢 신규 검토 업장</b><br>{target_address}",
+        tooltip="🏢 신규 검토 업장 (출발지)",
+        icon=folium.Icon(color="green", icon="play", prefix="fa")
+    ).add_to(m2)
+
+    for _, row in top_facilities.iterrows():
+        f_lat, f_lng = row['latitude'], row['longitude']
+        rank = row['순위']
+        dist = row['직선거리_km']
+        
         folium.Marker(
-            location=[target_lat, target_lng],
-            popup=f"<b>🏢 신규 검토 업장</b><br>{target_address}",
-            tooltip="🏢 신규 검토 업장 (출발지)",
-            icon=folium.Icon(color="green", icon="play", prefix="fa")
+            location=[f_lat, f_lng],
+            popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b>",
+            tooltip=f"{rank}위. {row['처리장명']} ({dist}km)",
+            icon=folium.Icon(color="red", icon="info-sign")
         ).add_to(m2)
 
-        # 2. Top-K 처리장 마커 & 동선 연결선
-        for _, row in top_facilities.iterrows():
-            f_lat, f_lng = row['latitude'], row['longitude']
-            rank = row['순위']
-            dist = row['직선거리_km']
-            
-            # 처리장 위치 마커 (빨간색 숫자가 새겨진 마커)
-            folium.Marker(
-                location=[f_lat, f_lng],
-                popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b>",
-                tooltip=f"{rank}위. {row['처리장명']} ({dist}km)",
-                icon=folium.Icon(color="red", icon="info-sign")
-            ).add_to(m2)
+        folium.PolyLine(
+            locations=[[target_lat, target_lng], [f_lat, f_lng]],
+            color="#e74c3c" if rank == 1 else "#3498db",
+            weight=3 if rank == 1 else 1.5,
+            opacity=0.8 if rank == 1 else 0.4,
+            dash_array='5, 5'
+        ).add_to(m2)
 
-            # 신규 업장과 처리장을 잇는 동선 연결선 (점선)
-            folium.PolyLine(
-                locations=[[target_lat, target_lng], [f_lat, f_lng]],
-                color="#e74c3c" if rank == 1 else "#3498db", # 1등 처리장은 빨간선, 나머지는 파란선
-                weight=3 if rank == 1 else 1.5,
-                opacity=0.8 if rank == 1 else 0.4,
-                dash_array='5, 5'
-            ).add_to(m2)
+    st_folium(m2, width="100%", height=500, key="map2")
 
-        st_folium(m2, width="100%", height=500, key="map2")
-
-    st.markdown("---")
     st.subheader(f"📊 최단 거리 처리장 추천 목록 (가장 가까운 순서)")
     st.dataframe(
         top_facilities[['순위', '처리장명', '직선거리_km', '주소', '구분']],

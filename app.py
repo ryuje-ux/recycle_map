@@ -3,8 +3,7 @@ import pandas as pd
 import folium
 from folium.plugins import HeatMap, MarkerCluster
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
+import re
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -15,6 +14,49 @@ st.set_page_config(
 
 st.title("🗺️ 전국 고객사 작업량 분석 대시보드")
 
+# 주요 지역/시군구 기준 좌표 딕셔너리 (즉시 변환용)
+REGION_COORDS = {
+    '서울': (37.5665, 126.9780), '강남구': (37.5172, 127.0473), '서초구': (37.4837, 127.0324),
+    '송파구': (37.5145, 127.1060), '영등포구': (37.5263, 126.8962), '마포구': (37.5663, 126.9016),
+    '중구': (37.5641, 126.9979), '종로구': (37.5730, 126.9794), '성동구': (37.5635, 127.0365),
+    '광진구': (37.5385, 127.0823), '동대문구': (37.5744, 127.0400), '중랑구': (37.6066, 127.0927),
+    '성북구': (37.5894, 127.0167), '강북구': (37.6396, 127.0257), '도봉구': (37.6688, 127.0471),
+    '노원구': (37.6542, 127.0568), '은평구': (37.6027, 126.9291), '서대문구': (37.5791, 126.9368),
+    '양천구': (37.5169, 126.8665), '강서구': (37.5509, 126.8495), '구로구': (37.4954, 126.8874),
+    '금천구': (37.4568, 126.8952), '동작구': (37.5124, 126.9393), '관악구': (37.4784, 126.9516),
+    '강동구': (37.5301, 127.1238), '경기': (37.4138, 127.5183), '수원시': (37.2636, 127.0286),
+    '성남시': (37.4200, 127.1265), '고양시': (37.6584, 126.8320), '용인시': (37.2410, 127.1775),
+    '부천시': (37.5034, 126.7660), '안산시': (37.3219, 126.8309), '안양시': (37.3943, 126.9568),
+    '남양주시': (37.6360, 127.2165), '화성시': (37.1995, 126.8312), '평택시': (36.9921, 127.1129),
+    '의정부시': (37.7381, 127.0337), '파주시': (37.7600, 126.7799), '시흥시': (37.3802, 126.8029),
+    '김포시': (37.6153, 126.7156), '광명시': (37.4786, 126.8647), '광주시': (37.4087, 127.2582),
+    '군포시': (37.3614, 126.9352), '이천시': (37.2723, 127.4350), '오산시': (37.1498, 127.0772),
+    '하남시': (37.5393, 127.2148), '양주시': (37.7853, 127.0458), '구리시': (37.5943, 127.1295),
+    '안성시': (37.0080, 127.2797), '포천시': (37.8949, 127.2003), '의왕시': (37.3447, 126.9682),
+    '여주시': (37.2982, 127.6370), '양평군': (37.4917, 127.4875), '동두천시': (37.9035, 127.0607),
+    '인천': (37.4563, 126.7052), '부평구': (37.5070, 126.7218), '대전': (36.3504, 127.3845),
+    '서구': (36.3551, 127.3838), '대구': (35.8714, 128.6014), '부산': (35.1796, 129.0756),
+    '광주': (35.1595, 126.8526), '울산': (35.5384, 129.3114), '세종': (36.4800, 127.2890),
+    '강원': (37.8228, 128.1555), '원주시': (37.3422, 127.9201), '충북': (36.6357, 127.4912),
+    '청주시': (36.6424, 127.4890), '충남': (36.5184, 126.8000), '천안시': (36.8151, 127.1139),
+    '전북': (35.7175, 127.1530), '전주': (35.8242, 127.1480), '전남': (34.8679, 126.9910),
+    '경북': (36.5760, 128.5056), '포항': (36.0190, 129.3435), '경남': (35.4606, 128.2132),
+    '창원': (35.2280, 128.6811), '제주': (33.4996, 126.5312)
+}
+
+def get_fast_coordinates(addr):
+    if not isinstance(addr, str) or addr == '주소 미입력':
+        return None, None
+    tokens = addr.split()
+    # 주소 내 구/시/군 단어를 탐색하여 좌표 매핑
+    for token in reversed(tokens[:3]):
+        if token in REGION_COORDS:
+            return REGION_COORDS[token]
+    for key, (lat, lng) in REGION_COORDS.items():
+        if key in addr:
+            return lat, lng
+    return 36.5, 127.5 # 기본 한국 중심 좌표
+
 # 사이드바 설정
 st.sidebar.header("📁 데이터 업로드 및 필터")
 uploaded_file = st.sidebar.file_uploader("엑셀 파일(.xlsx)을 업로드하세요", type=["xlsx", "xls"])
@@ -24,7 +66,6 @@ def load_data(file):
     df = pd.read_excel(file)
     addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소'
     
-    # 결측치 및 데이터 타입 전처리
     df['고객사명'] = df['고객사명'].astype(str).str.strip()
     df[addr_col] = df[addr_col].fillna('주소 미입력')
     df['차량종류'] = df['차량종류'].fillna('미지정')
@@ -32,37 +73,15 @@ def load_data(file):
     df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
     df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
     
-    return df, addr_col
-
-@st.cache_data
-def geocode_addresses(addresses_tuple):
-    # 입력 인자를 해시 가능한 tuple 타입으로 변경
-    geolocator = Nominatim(user_agent="upbox_heatmap_app_v2")
-    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=0.1)
+    # 좌표 변환
+    coords = [get_fast_coordinates(a) for a in df[addr_col]]
+    df['latitude'] = [c[0] for c in coords]
+    df['longitude'] = [c[1] for c in coords]
     
-    coords = {}
-    for addr in set(addresses_tuple):
-        if addr == '주소 미입력' or not str(addr).strip():
-            continue
-        try:
-            location = geocode(str(addr))
-            if location:
-                coords[addr] = (location.latitude, location.longitude)
-        except Exception:
-            pass
-    return coords
+    return df, addr_col
 
 if uploaded_file is not None:
     df, addr_col = load_data(uploaded_file)
-    
-    # 캐싱 에러 방지를 위해 tuple 타입으로 변환 전달
-    unique_addrs = tuple(df[addr_col].dropna().unique().tolist())
-    
-    with st.spinner("주소 데이터를 위도/경도 좌표로 변환 중입니다... (최초 1회 소요)"):
-        coords = geocode_addresses(unique_addrs)
-    
-    df['latitude'] = df[addr_col].map(lambda x: coords.get(x, (None, None))[0])
-    df['longitude'] = df[addr_col].map(lambda x: coords.get(x, (None, None))[1])
     
     # 사이드바 필터링 옵션
     st.sidebar.subheader("🔍 조건 필터링")

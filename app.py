@@ -57,20 +57,21 @@ tab1, tab2 = st.tabs(["🗺️ 1. 고객사 히트맵 & 작업량 분석", "🚚
 # ==========================================
 with tab1:
     st.subheader("📊 전국 고객사 배출 작업량 히트맵 분석")
-    
-    # [독립 업로드 1] 고객사 전용 업로드 창
     cust_file = st.file_uploader("📂 [고객사 데이터] 엑셀 파일(.xlsx)을 업로드하세요", type=["xlsx", "xls"], key="cust_upload")
 
     @st.cache_data
     def load_customer_data(file):
         df = pd.read_excel(file)
-        addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소'
-        df['고객사명'] = df['고객사명'].astype(str).str.strip()
+        addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소' if '✔️배출계약_Master - 고객사ID → 고객사 주소' in df.columns else df.columns[1]
+        
+        df['고객사명'] = df[df.columns[0]].astype(str).str.strip()
         df[addr_col] = df[addr_col].fillna('주소 미입력')
-        df['차량종류'] = df['차량종류'].fillna('미지정')
-        df['운영파트너명'] = df['운영파트너명'].fillna('미지정')
-        df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
-        df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
+        df['차량종류'] = df['차량종류'].fillna('미지정') if '차량종류' in df.columns else '미지정'
+        df['운영파트너명'] = df['운영파트너명'].fillna('미지정') if '운영파트너명' in df.columns else '미지정'
+        df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정') if '폐기물종류소분류' in df.columns else '미지정'
+        
+        vol_col = '작업량의 합계' if '작업량의 합계' in df.columns else df.columns[-1]
+        df['작업량의 합계'] = pd.to_numeric(df[vol_col], errors='coerce').fillna(0)
         df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
         
         coords = [get_fast_coordinates(a) for a in df[addr_col]]
@@ -81,7 +82,6 @@ with tab1:
     if cust_file is not None:
         df, addr_col = load_customer_data(cust_file)
         
-        # 필터 레이아웃
         st.sidebar.header("🔍 [탭1] 고객사 필터링")
         search_query = st.sidebar.text_input("고객사명 / 주소 검색", "", key="search_cust")
         
@@ -172,31 +172,33 @@ with tab2:
 
     with col_facility:
         st.markdown("#### 2️⃣ [처리장 전용 데이터] 등록")
-        # [독립 업로드 2] 처리장 전용 업로드 창
-        facility_file = st.file_uploader("📂 처리장 목록 엑셀(.xlsx) 업로드 (미업로드 시 기본 샘플 사용)", type=["xlsx", "xls"], key="facility_upload")
+        facility_file = st.file_uploader("📂 처리장 목록 엑셀(.xlsx) 업로드", type=["xlsx", "xls"], key="facility_upload")
 
-    # 처리장 데이터셋 생성
+    # 처리장 데이터 자동 인식 로직
     if facility_file is not None:
-        facility_df = pd.read_excel(facility_file)
+        raw_f_df = pd.read_excel(facility_file)
+        
+        # 컬럼명 유연성 매핑 (영문/한글 모두 자동 대응)
+        name_col = 'company_name' if 'company_name' in raw_f_df.columns else ('처리장명' if '처리장명' in raw_f_df.columns else raw_f_df.columns[0])
+        addr_col = 'working_spot_address' if 'working_spot_address' in raw_f_df.columns else ('주소' if '주소' in raw_f_df.columns else raw_f_df.columns[1])
+        type_col = 'waste_type' if 'waste_type' in raw_f_df.columns else ('구분' if '구분' in raw_f_df.columns else raw_f_df.columns[-1])
+        
+        facility_df = pd.DataFrame({
+            '처리장명': raw_f_df[name_col],
+            '주소': raw_f_df[addr_col],
+            '구분': raw_f_df[type_col]
+        })
     else:
-        # 내장 기본 처리장 샘플 데이터셋
         facility_data = [
             {"처리장명": "UpBox 화성 처리장", "주소": "경기 화성시 장안면", "구분": "소각/재활용"},
             {"처리장명": "UpBox 청주 리싸이클링", "주소": "충북 청주시 흥덕구", "구분": "재활용"},
             {"처리장명": "UpBox 하남 자원", "주소": "경기 하남시 풍산동", "구분": "수집운반/선별"},
             {"처리장명": "설성리싸이클링센터", "주소": "경기 이천시 설성면", "구분": "재활용"},
-            {"처리장명": "표준산업 처리장", "주소": "경기 평택시 고덕면", "구분": "파쇄/소각"},
-            {"처리장명": "인천 남부 폐기물처리장", "주소": "인천 부평구 부평동", "구분": "선별장"},
-            {"처리장명": "광명 환경센터", "주소": "경기 광명시 가학동", "구분": "소각장"},
-            {"처리장명": "용인 자원순환센터", "주소": "경기 용인시 처인구", "구분": "재활용"},
-            {"처리장명": "안산 환경자원센터", "주소": "경기 안산시 단원구", "구분": "매립/소각"},
-            {"처리장명": "시흥 성남 처리장", "주소": "경기 시흥시 정왕동", "구분": "중간처분"},
-            {"처리장명": "대전 자원순환단지", "주소": "대전 서구 봉명동", "구분": "재활용"},
-            {"처리장명": "천안 환경사업소", "주소": "충남 천안시 서북구", "구분": "소각장"}
+            {"처리장명": "표준산업 처리장", "주소": "경기 평택시 고덕면", "구분": "파쇄/소각"}
         ]
         facility_df = pd.DataFrame(facility_data)
 
-    f_coords = [get_fast_coordinates(addr) for addr in facility_df['주소']]
+    f_coords = [get_fast_coordinates(a) for a in facility_df['주소']]
     facility_df['latitude'] = [c[0] for c in f_coords]
     facility_df['longitude'] = [c[1] for c in f_coords]
 
@@ -229,7 +231,7 @@ with tab2:
         
         folium.Marker(
             location=[f_lat, f_lng],
-            popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b>",
+            popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b><br>폐기물: {row['구분']}",
             tooltip=f"{rank}위. {row['처리장명']} ({dist}km)",
             icon=folium.Icon(color="red", icon="info-sign")
         ).add_to(m2)

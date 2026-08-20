@@ -13,7 +13,7 @@ st.set_page_config(
 
 st.title("🗺️ 전국 고객사 작업량 분석 대시보드")
 
-# 주요 지역/시군구 기준 좌표 딕셔너리
+# 주요 지역/시군구 좌표 딕셔너리
 REGION_COORDS = {
     '서울': (37.5665, 126.9780), '강남구': (37.5172, 127.0473), '서초구': (37.4837, 127.0324),
     '송파구': (37.5145, 127.1060), '영등포구': (37.5263, 126.8962), '마포구': (37.5663, 126.9016),
@@ -69,11 +69,9 @@ def load_data(file):
     df['운영파트너명'] = df['운영파트너명'].fillna('미지정')
     df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
     
-    # 누적 작업량 및 월평균 수거량 계산 (12개월 기준)
     df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
     df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
     
-    # 좌표 매핑
     coords = [get_fast_coordinates(a) for a in df[addr_col]]
     df['latitude'] = [c[0] for c in coords]
     df['longitude'] = [c[1] for c in coords]
@@ -86,30 +84,34 @@ if uploaded_file is not None:
     st.sidebar.subheader("🔍 조건 필터링")
     search_query = st.sidebar.text_input("고객사명 / 주소 검색", "")
     
-    all_partners = sorted(df['운영파트너명'].unique().tolist())
-    selected_partners = st.sidebar.multiselect("운영파트너 선택", all_partners, default=all_partners)
+    # [개선 3] 단일 선택 드롭다운 + 전체 선택 옵션 필터 방식
+    all_partners = ["전체"] + sorted(df['운영파트너명'].unique().tolist())
+    selected_partner = st.sidebar.selectbox("운영파트너 선택", all_partners)
     
-    all_wastes = sorted(df['폐기물종류소분류'].unique().tolist())
-    selected_wastes = st.sidebar.multiselect("폐기물종류 선택", all_wastes, default=all_wastes)
+    all_wastes = ["전체"] + sorted(df['폐기물종류소분류'].unique().tolist())
+    selected_waste = st.sidebar.selectbox("폐기물종류 선택", all_wastes)
     
-    all_vehicles = sorted(df['차량종류'].unique().tolist())
-    selected_vehicles = st.sidebar.multiselect("차량종류 선택", all_vehicles, default=all_vehicles)
+    all_vehicles = ["전체"] + sorted(df['차량종류'].unique().tolist())
+    selected_vehicle = st.sidebar.selectbox("차량종류 선택", all_vehicles)
     
     map_mode = st.sidebar.radio("지도 표시 형태", ["월평균 작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
 
-    filtered_df = df[
-        (df['운영파트너명'].isin(selected_partners)) &
-        (df['폐기물종류소분류'].isin(selected_wastes)) &
-        (df['차량종류'].isin(selected_vehicles))
-    ]
-    
+    # 필터링 적용
+    filtered_df = df.copy()
+    if selected_partner != "전체":
+        filtered_df = filtered_df[filtered_df['운영파트너명'] == selected_partner]
+    if selected_waste != "전체":
+        filtered_df = filtered_df[filtered_df['폐기물종류소분류'] == selected_waste]
+    if selected_vehicle != "전체":
+        filtered_df = filtered_df[filtered_df['차량종류'] == selected_vehicle]
+        
     if search_query:
         filtered_df = filtered_df[
             filtered_df['고객사명'].str.contains(search_query, case=False) |
             filtered_df[addr_col].str.contains(search_query, case=False)
         ]
 
-    # 상단 지표 (KPI) - 월평균 수거량 강조
+    # 상단 요약 KPI
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("선택된 고객사 수", f"{filtered_df['고객사명'].nunique():,} 개")
     col2.metric("선택된 계약 건수", f"{len(filtered_df):,} 건")
@@ -128,7 +130,7 @@ if uploaded_file is not None:
 
     m = folium.Map(location=[center_lat, center_lng], zoom_start=7, tiles="cartodbpositron")
 
-    # 1) 히트맵 레이어 (월평균 수거량 기준)
+    # 1) 히트맵 레이어
     if map_mode in ["월평균 작업량 히트맵", "전체 레이어 함께 보기"]:
         heat_data = [
             [row['latitude'], row['longitude'], row['월평균수거량']]
@@ -142,7 +144,6 @@ if uploaded_file is not None:
     if map_mode in ["고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"]:
         marker_cluster = MarkerCluster().add_to(m)
         
-        # 고객사별 집계 데이터 (월평균 수거량 합계 + 폐기물별 배출량)
         customer_summary = valid_coords_df.groupby(['고객사명', addr_col, 'latitude', 'longitude']).agg(
             total_monthly_vol=('월평균수거량', 'sum'),
             total_annual_vol=('작업량의 합계', 'sum'),
@@ -151,7 +152,6 @@ if uploaded_file is not None:
         ).reset_index()
 
         for _, row in customer_summary.iterrows():
-            # 고객사별 세부 폐기물 배출량 목록 렌더링
             cust_items = valid_coords_df[valid_coords_df['고객사명'] == row['고객사명']]
             details_html = ""
             for _, item in cust_items.iterrows():
@@ -161,12 +161,9 @@ if uploaded_file is not None:
             <div style="font-family: Arial, sans-serif; width:260px; line-height:1.4;">
                 <h4 style="margin:0 0 5px 0; color:#1f77b4;">🏢 {row['고객사명']}</h4>
                 <p style="font-size:12px; color:gray; margin:0 0 8px 0;">📍 {row[addr_col]}</p>
-                
                 <div style="background-color:#f8f9fa; padding:8px; border-radius:5px; margin-bottom:8px;">
                     <p style="margin:0; font-size:14px;"><b>📦 월평균 배출량:</b> <span style="color:#d62728; font-weight:bold;">{row['total_monthly_vol']:,.1f} kg/월</span></p>
-                    <p style="margin:3px 0 0 0; font-size:11px; color:gray;">(최근 12개월 누적: {row['total_annual_vol']:,} kg)</p>
                 </div>
-                
                 <p style="margin:4px 0; font-size:12px;"><b>🚚 운영파트너:</b> {row['partners']}</p>
                 <hr style="margin:6px 0;">
                 <p style="margin:4px 0; font-size:12px;"><b>📋 폐기물별 월평균 수거량:</b></p>
@@ -178,13 +175,28 @@ if uploaded_file is not None:
             folium.Marker(
                 location=[row['latitude'], row['longitude']],
                 popup=folium.Popup(popup_html, max_width=320),
-                tooltip=f"{row['고객사명']} (월 {row['total_monthly_vol']:,.1f}kg)"
+                tooltip=row['고객사명']
             ).add_to(marker_cluster)
 
-    st_folium(m, width="100%", height=600)
+    # [개선 1 & 2] 지도 인터랙션 및 빠른 클릭 이벤트 수집
+    map_data = st_folium(m, width="100%", height=550, returned_objects=["last_object_clicked_tooltip"])
 
-    with st.expander("📊 선택된 상세 데이터 목록 보기"):
-        st.dataframe(filtered_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']])
+    st.markdown("---")
+
+    # [개선 1] 마커 클릭 시 해당 고객사 데이터로 목록 실시간 필터링
+    clicked_customer = map_data.get("last_object_clicked_tooltip")
+    
+    if clicked_customer:
+        st.subheader(f"📍 선택한 업장 상세 정보: [{clicked_customer}]")
+        display_df = filtered_df[filtered_df['고객사명'] == clicked_customer]
+    else:
+        st.subheader("📊 선택 조건 전체 데이터 목록 (지도 상의 핀을 클릭하면 해당 업장 정보만 표시됩니다)")
+        display_df = filtered_df
+
+    st.dataframe(
+        display_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']],
+        use_container_width=True
+    )
 
 else:
     st.info("👈 좌측 사이드바에서 보유하고 계신 엑셀 파일(.xlsx)을 업로드해주세요.")

@@ -3,7 +3,6 @@ import pandas as pd
 import folium
 from folium.plugins import HeatMap, MarkerCluster
 from streamlit_folium import st_folium
-import re
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -14,7 +13,7 @@ st.set_page_config(
 
 st.title("🗺️ 전국 고객사 작업량 분석 대시보드")
 
-# 주요 지역/시군구 기준 좌표 딕셔너리 (즉시 변환용)
+# 주요 지역/시군구 기준 좌표 딕셔너리
 REGION_COORDS = {
     '서울': (37.5665, 126.9780), '강남구': (37.5172, 127.0473), '서초구': (37.4837, 127.0324),
     '송파구': (37.5145, 127.1060), '영등포구': (37.5263, 126.8962), '마포구': (37.5663, 126.9016),
@@ -48,16 +47,14 @@ def get_fast_coordinates(addr):
     if not isinstance(addr, str) or addr == '주소 미입력':
         return None, None
     tokens = addr.split()
-    # 주소 내 구/시/군 단어를 탐색하여 좌표 매핑
     for token in reversed(tokens[:3]):
         if token in REGION_COORDS:
             return REGION_COORDS[token]
     for key, (lat, lng) in REGION_COORDS.items():
         if key in addr:
             return lat, lng
-    return 36.5, 127.5 # 기본 한국 중심 좌표
+    return 36.5, 127.5
 
-# 사이드바 설정
 st.sidebar.header("📁 데이터 업로드 및 필터")
 uploaded_file = st.sidebar.file_uploader("엑셀 파일(.xlsx)을 업로드하세요", type=["xlsx", "xls"])
 
@@ -71,9 +68,12 @@ def load_data(file):
     df['차량종류'] = df['차량종류'].fillna('미지정')
     df['운영파트너명'] = df['운영파트너명'].fillna('미지정')
     df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
-    df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
     
-    # 좌표 변환
+    # 누적 작업량 및 월평균 수거량 계산 (12개월 기준)
+    df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
+    df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
+    
+    # 좌표 매핑
     coords = [get_fast_coordinates(a) for a in df[addr_col]]
     df['latitude'] = [c[0] for c in coords]
     df['longitude'] = [c[1] for c in coords]
@@ -83,9 +83,7 @@ def load_data(file):
 if uploaded_file is not None:
     df, addr_col = load_data(uploaded_file)
     
-    # 사이드바 필터링 옵션
     st.sidebar.subheader("🔍 조건 필터링")
-    
     search_query = st.sidebar.text_input("고객사명 / 주소 검색", "")
     
     all_partners = sorted(df['운영파트너명'].unique().tolist())
@@ -97,7 +95,7 @@ if uploaded_file is not None:
     all_vehicles = sorted(df['차량종류'].unique().tolist())
     selected_vehicles = st.sidebar.multiselect("차량종류 선택", all_vehicles, default=all_vehicles)
     
-    map_mode = st.sidebar.radio("지도 표시 형태", ["작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
+    map_mode = st.sidebar.radio("지도 표시 형태", ["월평균 작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
 
     filtered_df = df[
         (df['운영파트너명'].isin(selected_partners)) &
@@ -111,15 +109,15 @@ if uploaded_file is not None:
             filtered_df[addr_col].str.contains(search_query, case=False)
         ]
 
-    # 주요 지표 (KPI)
-    col1, col2, col3 = st.columns(3)
+    # 상단 지표 (KPI) - 월평균 수거량 강조
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("선택된 고객사 수", f"{filtered_df['고객사명'].nunique():,} 개")
-    col2.metric("선택된 데이터 건수", f"{len(filtered_df):,} 건")
-    col3.metric("총 작업량 합계", f"{filtered_df['작업량의 합계'].sum():,} kg")
+    col2.metric("선택된 계약 건수", f"{len(filtered_df):,} 건")
+    col3.metric("월평균 수거량 합계", f"{filtered_df['월평균수거량'].sum():,.1f} kg/월")
+    col4.metric("12개월 누적 총 작업량", f"{filtered_df['작업량의 합계'].sum():,} kg")
 
     st.markdown("---")
 
-    # 지도 렌더링
     valid_coords_df = filtered_df.dropna(subset=['latitude', 'longitude'])
     
     if not valid_coords_df.empty:
@@ -130,47 +128,63 @@ if uploaded_file is not None:
 
     m = folium.Map(location=[center_lat, center_lng], zoom_start=7, tiles="cartodbpositron")
 
-    # 1) 히트맵 레이어
-    if map_mode in ["작업량 히트맵", "전체 레이어 함께 보기"]:
+    # 1) 히트맵 레이어 (월평균 수거량 기준)
+    if map_mode in ["월평균 작업량 히트맵", "전체 레이어 함께 보기"]:
         heat_data = [
-            [row['latitude'], row['longitude'], row['작업량의 합계']]
+            [row['latitude'], row['longitude'], row['월평균수거량']]
             for _, row in valid_coords_df.iterrows()
-            if row['작업량의 합계'] > 0
+            if row['월평균수거량'] > 0
         ]
         if heat_data:
             HeatMap(heat_data, radius=25, blur=15, max_zoom=10).add_to(m)
 
-    # 2) 클러스터링 및 팝업 마커 레이어
+    # 2) 클러스터 및 팝업 마커
     if map_mode in ["고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"]:
         marker_cluster = MarkerCluster().add_to(m)
         
+        # 고객사별 집계 데이터 (월평균 수거량 합계 + 폐기물별 배출량)
         customer_summary = valid_coords_df.groupby(['고객사명', addr_col, 'latitude', 'longitude']).agg(
-            total_volume=('작업량의 합계', 'sum'),
+            total_monthly_vol=('월평균수거량', 'sum'),
+            total_annual_vol=('작업량의 합계', 'sum'),
             partners=('운영파트너명', lambda x: ", ".join(set(x))),
             waste_types=('폐기물종류소분류', lambda x: ", ".join(set(x)))
         ).reset_index()
 
         for _, row in customer_summary.iterrows():
+            # 고객사별 세부 폐기물 배출량 목록 렌더링
+            cust_items = valid_coords_df[valid_coords_df['고객사명'] == row['고객사명']]
+            details_html = ""
+            for _, item in cust_items.iterrows():
+                details_html += f"<li><b>{item['폐기물종류소분류']}</b>: 약 {item['월평균수거량']:,.1f} kg/월 ({item['운영파트너명']})</li>"
+
             popup_html = f"""
-            <div style="font-family: Arial, sans-serif; width:220px;">
-                <h4 style="margin-bottom:5px;">{row['고객사명']}</h4>
-                <p style="font-size:12px; color:gray; margin-top:0;">📍 {row[addr_col]}</p>
-                <hr style="margin:5px 0;">
-                <p><b>총 작업량:</b> {row['total_volume']:,} kg</p>
-                <p><b>운영파트너:</b> {row['partners']}</p>
-                <p><b>폐기물 종류:</b> {row['waste_types']}</p>
+            <div style="font-family: Arial, sans-serif; width:260px; line-height:1.4;">
+                <h4 style="margin:0 0 5px 0; color:#1f77b4;">🏢 {row['고객사명']}</h4>
+                <p style="font-size:12px; color:gray; margin:0 0 8px 0;">📍 {row[addr_col]}</p>
+                
+                <div style="background-color:#f8f9fa; padding:8px; border-radius:5px; margin-bottom:8px;">
+                    <p style="margin:0; font-size:14px;"><b>📦 월평균 배출량:</b> <span style="color:#d62728; font-weight:bold;">{row['total_monthly_vol']:,.1f} kg/월</span></p>
+                    <p style="margin:3px 0 0 0; font-size:11px; color:gray;">(최근 12개월 누적: {row['total_annual_vol']:,} kg)</p>
+                </div>
+                
+                <p style="margin:4px 0; font-size:12px;"><b>🚚 운영파트너:</b> {row['partners']}</p>
+                <hr style="margin:6px 0;">
+                <p style="margin:4px 0; font-size:12px;"><b>📋 폐기물별 월평균 수거량:</b></p>
+                <ul style="margin:4px 0 0 0; padding-left:18px; font-size:11px;">
+                    {details_html}
+                </ul>
             </div>
             """
             folium.Marker(
                 location=[row['latitude'], row['longitude']],
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=row['고객사명']
+                popup=folium.Popup(popup_html, max_width=320),
+                tooltip=f"{row['고객사명']} (월 {row['total_monthly_vol']:,.1f}kg)"
             ).add_to(marker_cluster)
 
     st_folium(m, width="100%", height=600)
 
-    with st.expander("📊 선택된 데이터 목록 보기"):
-        st.dataframe(filtered_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '작업량의 합계']])
+    with st.expander("📊 선택된 상세 데이터 목록 보기"):
+        st.dataframe(filtered_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']])
 
 else:
     st.info("👈 좌측 사이드바에서 보유하고 계신 엑셀 파일(.xlsx)을 업로드해주세요.")

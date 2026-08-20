@@ -24,7 +24,7 @@ def load_data(file):
     df = pd.read_excel(file)
     addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소'
     
-    # 결측치 및 데이터 타입 정밀 전처리
+    # 결측치 및 데이터 타입 전처리
     df['고객사명'] = df['고객사명'].astype(str).str.strip()
     df[addr_col] = df[addr_col].fillna('주소 미입력')
     df['차량종류'] = df['차량종류'].fillna('미지정')
@@ -35,12 +35,13 @@ def load_data(file):
     return df, addr_col
 
 @st.cache_data
-def geocode_addresses(addresses):
-    geolocator = Nominatim(user_agent="upbox_heatmap_app_v1")
+def geocode_addresses(addresses_tuple):
+    # 입력 인자를 해시 가능한 tuple 타입으로 변경
+    geolocator = Nominatim(user_agent="upbox_heatmap_app_v2")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=0.1)
     
     coords = {}
-    for addr in set(addresses):
+    for addr in set(addresses_tuple):
         if addr == '주소 미입력' or not str(addr).strip():
             continue
         try:
@@ -54,7 +55,9 @@ def geocode_addresses(addresses):
 if uploaded_file is not None:
     df, addr_col = load_data(uploaded_file)
     
-    unique_addrs = df[addr_col].dropna().unique()
+    # 캐싱 에러 방지를 위해 tuple 타입으로 변환 전달
+    unique_addrs = tuple(df[addr_col].dropna().unique().tolist())
+    
     with st.spinner("주소 데이터를 위도/경도 좌표로 변환 중입니다... (최초 1회 소요)"):
         coords = geocode_addresses(unique_addrs)
     

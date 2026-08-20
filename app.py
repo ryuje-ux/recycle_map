@@ -3,49 +3,35 @@ import pandas as pd
 import folium
 from folium.plugins import HeatMap, MarkerCluster
 from streamlit_folium import st_folium
+import math
 
 # 페이지 기본 설정
 st.set_page_config(
-    page_title="전국 고객사 작업량 분석 히트맵",
+    page_title="UpBox 전국 고객사 & 처리장 분석 시스템",
     page_icon="🗺️",
     layout="wide"
 )
 
-st.title("🗺️ 전국 고객사 작업량 분석 대시보드")
+st.title("🗺️ UpBox 운영 분석 & 처리장 동선 추천 시스템")
 
-# 주요 지역/시군구 좌표 딕셔너리
+# 주요 지역 좌표 딕셔너리
 REGION_COORDS = {
     '서울': (37.5665, 126.9780), '강남구': (37.5172, 127.0473), '서초구': (37.4837, 127.0324),
     '송파구': (37.5145, 127.1060), '영등포구': (37.5263, 126.8962), '마포구': (37.5663, 126.9016),
     '중구': (37.5641, 126.9979), '종로구': (37.5730, 126.9794), '성동구': (37.5635, 127.0365),
-    '광진구': (37.5385, 127.0823), '동대문구': (37.5744, 127.0400), '중랑구': (37.6066, 127.0927),
-    '성북구': (37.5894, 127.0167), '강북구': (37.6396, 127.0257), '도봉구': (37.6688, 127.0471),
-    '노원구': (37.6542, 127.0568), '은평구': (37.6027, 126.9291), '서대문구': (37.5791, 126.9368),
-    '양천구': (37.5169, 126.8665), '강서구': (37.5509, 126.8495), '구로구': (37.4954, 126.8874),
-    '금천구': (37.4568, 126.8952), '동작구': (37.5124, 126.9393), '관악구': (37.4784, 126.9516),
-    '강동구': (37.5301, 127.1238), '경기': (37.4138, 127.5183), '수원시': (37.2636, 127.0286),
-    '성남시': (37.4200, 127.1265), '고양시': (37.6584, 126.8320), '용인시': (37.2410, 127.1775),
-    '부천시': (37.5034, 126.7660), '안산시': (37.3219, 126.8309), '안양시': (37.3943, 126.9568),
-    '남양주시': (37.6360, 127.2165), '화성시': (37.1995, 126.8312), '평택시': (36.9921, 127.1129),
-    '의정부시': (37.7381, 127.0337), '파주시': (37.7600, 126.7799), '시흥시': (37.3802, 126.8029),
-    '김포시': (37.6153, 126.7156), '광명시': (37.4786, 126.8647), '광주시': (37.4087, 127.2582),
-    '군포시': (37.3614, 126.9352), '이천시': (37.2723, 127.4350), '오산시': (37.1498, 127.0772),
-    '하남시': (37.5393, 127.2148), '양주시': (37.7853, 127.0458), '구리시': (37.5943, 127.1295),
-    '안성시': (37.0080, 127.2797), '포천시': (37.8949, 127.2003), '의왕시': (37.3447, 126.9682),
-    '여주시': (37.2982, 127.6370), '양평군': (37.4917, 127.4875), '동두천시': (37.9035, 127.0607),
-    '인천': (37.4563, 126.7052), '부평구': (37.5070, 126.7218), '대전': (36.3504, 127.3845),
-    '서구': (36.3551, 127.3838), '대구': (35.8714, 128.6014), '부산': (35.1796, 129.0756),
+    '경기': (37.4138, 127.5183), '수원시': (37.2636, 127.0286), '성남시': (37.4200, 127.1265),
+    '고양시': (37.6584, 126.8320), '용인시': (37.2410, 127.1775), '화성시': (37.1995, 126.8312),
+    '평택시': (36.9921, 127.1129), '인천': (37.4563, 126.7052), '부평구': (37.5070, 126.7218),
+    '대전': (36.3504, 127.3845), '대구': (35.8714, 128.6014), '부산': (35.1796, 129.0756),
     '광주': (35.1595, 126.8526), '울산': (35.5384, 129.3114), '세종': (36.4800, 127.2890),
-    '강원': (37.8228, 128.1555), '원주시': (37.3422, 127.9201), '충북': (36.6357, 127.4912),
-    '청주시': (36.6424, 127.4890), '충남': (36.5184, 126.8000), '천안시': (36.8151, 127.1139),
-    '전북': (35.7175, 127.1530), '전주': (35.8242, 127.1480), '전남': (34.8679, 126.9910),
-    '경북': (36.5760, 128.5056), '포항': (36.0190, 129.3435), '경남': (35.4606, 128.2132),
-    '창원': (35.2280, 128.6811), '제주': (33.4996, 126.5312)
+    '충북': (36.6357, 127.4912), '청주시': (36.6424, 127.4890), '충남': (36.5184, 126.8000),
+    '천안시': (36.8151, 127.1139), '전북': (35.7175, 127.1530), '경북': (36.5760, 128.5056),
+    '경남': (35.4606, 128.2132), '제주': (33.4996, 126.5312)
 }
 
 def get_fast_coordinates(addr):
     if not isinstance(addr, str) or addr == '주소 미입력':
-        return None, None
+        return 36.5, 127.5
     tokens = addr.split()
     for token in reversed(tokens[:3]):
         if token in REGION_COORDS:
@@ -55,148 +41,217 @@ def get_fast_coordinates(addr):
             return lat, lng
     return 36.5, 127.5
 
-st.sidebar.header("📁 데이터 업로드 및 필터")
-uploaded_file = st.sidebar.file_uploader("엑셀 파일(.xlsx)을 업로드하세요", type=["xlsx", "xls"])
+# 두 위경도 좌표 간의 거리(km) 계산 함수 (Haversine Formula)
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0 # 지구 반지름 (km)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return round(R * c, 2)
 
-@st.cache_data
-def load_data(file):
-    df = pd.read_excel(file)
-    addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소'
-    
-    df['고객사명'] = df['고객사명'].astype(str).str.strip()
-    df[addr_col] = df[addr_col].fillna('주소 미입력')
-    df['차량종류'] = df['차량종류'].fillna('미지정')
-    df['운영파트너명'] = df['운영파트너명'].fillna('미지정')
-    df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
-    
-    df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
-    df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
-    
-    coords = [get_fast_coordinates(a) for a in df[addr_col]]
-    df['latitude'] = [c[0] for c in coords]
-    df['longitude'] = [c[1] for c in coords]
-    
-    return df, addr_col
+# 메인 탭 구성을 통한 별도 페이지 기능 구현
+tab1, tab2 = st.tabs(["🗺️ 고객사 히트맵 & 분석", "🚚 신규 업장 ➔ 최단 처리장 동선 추천"])
 
-if uploaded_file is not None:
-    df, addr_col = load_data(uploaded_file)
-    
-    st.sidebar.subheader("🔍 조건 필터링")
-    search_query = st.sidebar.text_input("고객사명 / 주소 검색", "")
-    
-    # [개선 3] 단일 선택 드롭다운 + 전체 선택 옵션 필터 방식
-    all_partners = ["전체"] + sorted(df['운영파트너명'].unique().tolist())
-    selected_partner = st.sidebar.selectbox("운영파트너 선택", all_partners)
-    
-    all_wastes = ["전체"] + sorted(df['폐기물종류소분류'].unique().tolist())
-    selected_waste = st.sidebar.selectbox("폐기물종류 선택", all_wastes)
-    
-    all_vehicles = ["전체"] + sorted(df['차량종류'].unique().tolist())
-    selected_vehicle = st.sidebar.selectbox("차량종류 선택", all_vehicles)
-    
-    map_mode = st.sidebar.radio("지도 표시 형태", ["월평균 작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
+# ==========================================
+# TAB 1: 고객사 히트맵 & 분석
+# ==========================================
+with tab1:
+    st.sidebar.header("📁 [탭1] 고객사 데이터 업로드")
+    uploaded_file = st.sidebar.file_uploader("고객사 엑셀 파일(.xlsx)", type=["xlsx", "xls"], key="cust_file")
 
-    # 필터링 적용
-    filtered_df = df.copy()
-    if selected_partner != "전체":
-        filtered_df = filtered_df[filtered_df['운영파트너명'] == selected_partner]
-    if selected_waste != "전체":
-        filtered_df = filtered_df[filtered_df['폐기물종류소분류'] == selected_waste]
-    if selected_vehicle != "전체":
-        filtered_df = filtered_df[filtered_df['차량종류'] == selected_vehicle]
+    @st.cache_data
+    def load_customer_data(file):
+        df = pd.read_excel(file)
+        addr_col = '✔️배출계약_Master - 고객사ID → 고객사 주소'
+        df['고객사명'] = df['고객사명'].astype(str).str.strip()
+        df[addr_col] = df[addr_col].fillna('주소 미입력')
+        df['차량종류'] = df['차량종류'].fillna('미지정')
+        df['운영파트너명'] = df['운영파트너명'].fillna('미지정')
+        df['폐기물종류소분류'] = df['폐기물종류소분류'].fillna('미지정')
+        df['작업량의 합계'] = pd.to_numeric(df['작업량의 합계'], errors='coerce').fillna(0)
+        df['월평균수거량'] = (df['작업량의 합계'] / 12).round(1)
         
-    if search_query:
-        filtered_df = filtered_df[
-            filtered_df['고객사명'].str.contains(search_query, case=False) |
-            filtered_df[addr_col].str.contains(search_query, case=False)
-        ]
+        coords = [get_fast_coordinates(a) for a in df[addr_col]]
+        df['latitude'] = [c[0] for c in coords]
+        df['longitude'] = [c[1] for c in coords]
+        return df, addr_col
 
-    # 상단 요약 KPI
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("선택된 고객사 수", f"{filtered_df['고객사명'].nunique():,} 개")
-    col2.metric("선택된 계약 건수", f"{len(filtered_df):,} 건")
-    col3.metric("월평균 수거량 합계", f"{filtered_df['월평균수거량'].sum():,.1f} kg/월")
-    col4.metric("12개월 누적 총 작업량", f"{filtered_df['작업량의 합계'].sum():,} kg")
+    if uploaded_file is not None:
+        df, addr_col = load_customer_data(uploaded_file)
+        
+        st.sidebar.subheader("🔍 조건 필터링")
+        search_query = st.sidebar.text_input("고객사명 / 주소 검색", "", key="search1")
+        
+        all_partners = ["전체"] + sorted(df['운영파트너명'].unique().tolist())
+        selected_partner = st.sidebar.selectbox("운영파트너 선택", all_partners)
+        
+        all_wastes = ["전체"] + sorted(df['폐기물종류소분류'].unique().tolist())
+        selected_waste = st.sidebar.selectbox("폐기물종류 선택", all_wastes)
+        
+        all_vehicles = ["전체"] + sorted(df['차량종류'].unique().tolist())
+        selected_vehicle = st.sidebar.selectbox("차량종류 선택", all_vehicles)
+        
+        map_mode = st.sidebar.radio("지도 표시 형태", ["월평균 작업량 히트맵", "고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"])
 
-    st.markdown("---")
+        filtered_df = df.copy()
+        if selected_partner != "전체":
+            filtered_df = filtered_df[filtered_df['운영파트너명'] == selected_partner]
+        if selected_waste != "전체":
+            filtered_df = filtered_df[filtered_df['폐기물종류소분류'] == selected_waste]
+        if selected_vehicle != "전체":
+            filtered_df = filtered_df[filtered_df['차량종류'] == selected_vehicle]
+            
+        if search_query:
+            filtered_df = filtered_df[
+                filtered_df['고객사명'].str.contains(search_query, case=False) |
+                filtered_df[addr_col].str.contains(search_query, case=False)
+            ]
 
-    valid_coords_df = filtered_df.dropna(subset=['latitude', 'longitude'])
-    
-    if not valid_coords_df.empty:
-        center_lat = valid_coords_df['latitude'].mean()
-        center_lng = valid_coords_df['longitude'].mean()
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("선택된 고객사 수", f"{filtered_df['고객사명'].nunique():,} 개")
+        col2.metric("선택된 계약 건수", f"{len(filtered_df):,} 건")
+        col3.metric("월평균 수거량 합계", f"{filtered_df['월평균수거량'].sum():,.1f} kg/월")
+        col4.metric("12개월 누적 총 작업량", f"{filtered_df['작업량의 합계'].sum():,} kg")
+
+        st.markdown("---")
+
+        valid_coords_df = filtered_df.dropna(subset=['latitude', 'longitude'])
+        center_lat = valid_coords_df['latitude'].mean() if not valid_coords_df.empty else 36.5
+        center_lng = valid_coords_df['longitude'].mean() if not valid_coords_df.empty else 127.5
+
+        m1 = folium.Map(location=[center_lat, center_lng], zoom_start=7, tiles="cartodbpositron")
+
+        if map_mode in ["월평균 작업량 히트맵", "전체 레이어 함께 보기"]:
+            heat_data = [[row['latitude'], row['longitude'], row['월평균수거량']] for _, row in valid_coords_df.iterrows() if row['월평균수거량'] > 0]
+            if heat_data:
+                HeatMap(heat_data, radius=25, blur=15, max_zoom=10).add_to(m1)
+
+        if map_mode in ["고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"]:
+            marker_cluster = MarkerCluster().add_to(m1)
+            customer_summary = valid_coords_df.groupby(['고객사명', addr_col, 'latitude', 'longitude']).agg(
+                total_monthly_vol=('월평균수거량', 'sum')
+            ).reset_index()
+
+            for _, row in customer_summary.iterrows():
+                folium.Marker(
+                    location=[row['latitude'], row['longitude']],
+                    popup=f"<b>{row['고객사명']}</b><br>월평균: {row['total_monthly_vol']:,.1f} kg/월",
+                    tooltip=row['고객사명']
+                ).add_to(marker_cluster)
+
+        map_data1 = st_folium(m1, width="100%", height=500, returned_objects=["last_object_clicked_tooltip"], key="map1")
+
+        clicked_customer = map_data1.get("last_object_clicked_tooltip")
+        if clicked_customer:
+            st.subheader(f"📍 선택한 업장 상세 정보: [{clicked_customer}]")
+            display_df = filtered_df[filtered_df['고객사명'] == clicked_customer]
+        else:
+            st.subheader("📊 선택 조건 전체 데이터 목록")
+            display_df = filtered_df
+
+        st.dataframe(display_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']], use_container_width=True)
     else:
-        center_lat, center_lng = 36.5, 127.5
+        st.info("👈 좌측 사이드바에서 고객사 엑셀 파일을 업로드해주세요.")
 
-    m = folium.Map(location=[center_lat, center_lng], zoom_start=7, tiles="cartodbpositron")
 
-    # 1) 히트맵 레이어
-    if map_mode in ["월평균 작업량 히트맵", "전체 레이어 함께 보기"]:
-        heat_data = [
-            [row['latitude'], row['longitude'], row['월평균수거량']]
-            for _, row in valid_coords_df.iterrows()
-            if row['월평균수거량'] > 0
+# ==========================================
+# TAB 2: 신규 업장 ➔ 최단 처리장 동선 추천
+# ==========================================
+with tab2:
+    st.header("🚚 신규 운영 검토 업장 최단 동선 처리장 추천")
+    
+    col_left, col_right = st.columns([1, 2])
+    
+    with col_left:
+        st.subheader("1️⃣ 신규 검토 업장 주소 입력")
+        target_address = st.text_input("신규 업장 주소를 입력 후 엔터를 누르세요", "경기 화성시 장안면 북부마을길 42")
+        top_k = st.slider("추천받을 최단 거리 처리장 수", min_value=3, max_value=20, value=10)
+
+        st.subheader("2️⃣ 처리장 데이터 등록")
+        st.caption("처리장 데이터 엑셀을 업로드하시거나 기본 데이터셋을 사용합니다.")
+        facility_file = st.file_uploader("처리장 엑셀 업로드(선택사항)", type=["xlsx", "xls"], key="facility_file")
+
+    # 기본 처리장 데이터셋 구축 (업로드 없을 시 기본 적용)
+    if facility_file is not None:
+        facility_df = pd.read_excel(facility_file)
+    else:
+        # 내장 샘플 처리장 데이터셋
+        facility_data = [
+            {"처리장명": "UpBox 화성 처리장", "주소": "경기 화성시 장안면", "구분": "소각/재활용"},
+            {"처리장명": "UpBox 청주 리싸이클링", "주소": "충북 청주시 흥덕구", "구분": "재활용"},
+            {"처리장명": "UpBox 하남 자원", "주소": "경기 하남시 풍산동", "구분": "수집운반/선별"},
+            {"처리장명": "설성리싸이클링센터", "주소": "경기 이천시 설성면", "구분": "재활용"},
+            {"처리장명": "표준산업 처리장", "주소": "경기 평택시 고덕면", "구분": "파쇄/소각"},
+            {"처리장명": "인천 남부 폐기물처리장", "주소": "인천 부평구 부평동", "구분": "선별장"},
+            {"처리장명": "광명 환경센터", "주소": "경기 광명시 가학동", "구분": "소각장"},
+            {"처리장명": "용인 자원순환센터", "주소": "경기 용인시 처인구", "구분": "재활용"},
+            {"처리장명": "안산 환경자원센터", "주소": "경기 안산시 단원구", "구분": "매립/소각"},
+            {"처리장명": "시흥 성남 처리장", "주소": "경기 시흥시 정왕동", "구분": "중간처분"},
+            {"처리장명": "대전 자원순환단지", "주소": "대전 서구 봉명동", "구분": "재활용"},
+            {"처리장명": "천안 환경사업소", "주소": "충남 천안시 서북구", "구분": "소각장"}
         ]
-        if heat_data:
-            HeatMap(heat_data, radius=25, blur=15, max_zoom=10).add_to(m)
+        facility_df = pd.DataFrame(facility_data)
 
-    # 2) 클러스터 및 팝업 마커
-    if map_mode in ["고객사 위치 포인트(클러스터)", "전체 레이어 함께 보기"]:
-        marker_cluster = MarkerCluster().add_to(m)
+    # 처리장 좌표 생성
+    f_coords = [get_fast_coordinates(addr) for addr in facility_df['주소']]
+    facility_df['latitude'] = [c[0] for c in f_coords]
+    facility_df['longitude'] = [c[1] for c in f_coords]
+
+    # 신규 업장 좌표 가져오기
+    target_lat, target_lng = get_fast_coordinates(target_address)
+
+    # 최단 거리 계산
+    facility_df['직선거리_km'] = [
+        haversine_distance(target_lat, target_lng, row['latitude'], row['longitude'])
+        for _, row in facility_df.iterrows()
+    ]
+
+    # 최단거리 순으로 정렬하여 상위 Top-K 추출
+    top_facilities = facility_df.sort_values(by='직선거리_km').head(top_k).reset_index(drop=True)
+    top_facilities['순위'] = top_facilities.index + 1
+
+    with col_right:
+        st.subheader(f"🗺️ [{target_address}] 기준 최단 거리 처리장 Top {top_k} 동선 지도")
         
-        customer_summary = valid_coords_df.groupby(['고객사명', addr_col, 'latitude', 'longitude']).agg(
-            total_monthly_vol=('월평균수거량', 'sum'),
-            total_annual_vol=('작업량의 합계', 'sum'),
-            partners=('운영파트너명', lambda x: ", ".join(set(x))),
-            waste_types=('폐기물종류소분류', lambda x: ", ".join(set(x)))
-        ).reset_index()
+        m2 = folium.Map(location=[target_lat, target_lng], zoom_start=9, tiles="cartodbpositron")
 
-        for _, row in customer_summary.iterrows():
-            cust_items = valid_coords_df[valid_coords_df['고객사명'] == row['고객사명']]
-            details_html = ""
-            for _, item in cust_items.iterrows():
-                details_html += f"<li><b>{item['폐기물종류소분류']}</b>: 약 {item['월평균수거량']:,.1f} kg/월 ({item['운영파트너명']})</li>"
+        # 1. 출발지 신규 업장 마커 (초록색 아이콘)
+        folium.Marker(
+            location=[target_lat, target_lng],
+            popup=f"<b>🏢 신규 검토 업장</b><br>{target_address}",
+            tooltip="🏢 신규 검토 업장 (출발지)",
+            icon=folium.Icon(color="green", icon="play", prefix="fa")
+        ).add_to(m2)
 
-            popup_html = f"""
-            <div style="font-family: Arial, sans-serif; width:260px; line-height:1.4;">
-                <h4 style="margin:0 0 5px 0; color:#1f77b4;">🏢 {row['고객사명']}</h4>
-                <p style="font-size:12px; color:gray; margin:0 0 8px 0;">📍 {row[addr_col]}</p>
-                <div style="background-color:#f8f9fa; padding:8px; border-radius:5px; margin-bottom:8px;">
-                    <p style="margin:0; font-size:14px;"><b>📦 월평균 배출량:</b> <span style="color:#d62728; font-weight:bold;">{row['total_monthly_vol']:,.1f} kg/월</span></p>
-                </div>
-                <p style="margin:4px 0; font-size:12px;"><b>🚚 운영파트너:</b> {row['partners']}</p>
-                <hr style="margin:6px 0;">
-                <p style="margin:4px 0; font-size:12px;"><b>📋 폐기물별 월평균 수거량:</b></p>
-                <ul style="margin:4px 0 0 0; padding-left:18px; font-size:11px;">
-                    {details_html}
-                </ul>
-            </div>
-            """
+        # 2. Top-K 처리장 마커 & 동선 연결선
+        for _, row in top_facilities.iterrows():
+            f_lat, f_lng = row['latitude'], row['longitude']
+            rank = row['순위']
+            dist = row['직선거리_km']
+            
+            # 처리장 위치 마커 (빨간색 숫자가 새겨진 마커)
             folium.Marker(
-                location=[row['latitude'], row['longitude']],
-                popup=folium.Popup(popup_html, max_width=320),
-                tooltip=row['고객사명']
-            ).add_to(marker_cluster)
+                location=[f_lat, f_lng],
+                popup=f"<b>{rank}위: {row['처리장명']}</b><br>📍 {row['주소']}<br>📏 거리: <b>{dist} km</b>",
+                tooltip=f"{rank}위. {row['처리장명']} ({dist}km)",
+                icon=folium.Icon(color="red", icon="info-sign")
+            ).add_to(m2)
 
-    # [개선 1 & 2] 지도 인터랙션 및 빠른 클릭 이벤트 수집
-    map_data = st_folium(m, width="100%", height=550, returned_objects=["last_object_clicked_tooltip"])
+            # 신규 업장과 처리장을 잇는 동선 연결선 (점선)
+            folium.PolyLine(
+                locations=[[target_lat, target_lng], [f_lat, f_lng]],
+                color="#e74c3c" if rank == 1 else "#3498db", # 1등 처리장은 빨간선, 나머지는 파란선
+                weight=3 if rank == 1 else 1.5,
+                opacity=0.8 if rank == 1 else 0.4,
+                dash_array='5, 5'
+            ).add_to(m2)
+
+        st_folium(m2, width="100%", height=500, key="map2")
 
     st.markdown("---")
-
-    # [개선 1] 마커 클릭 시 해당 고객사 데이터로 목록 실시간 필터링
-    clicked_customer = map_data.get("last_object_clicked_tooltip")
-    
-    if clicked_customer:
-        st.subheader(f"📍 선택한 업장 상세 정보: [{clicked_customer}]")
-        display_df = filtered_df[filtered_df['고객사명'] == clicked_customer]
-    else:
-        st.subheader("📊 선택 조건 전체 데이터 목록 (지도 상의 핀을 클릭하면 해당 업장 정보만 표시됩니다)")
-        display_df = filtered_df
-
+    st.subheader(f"📊 최단 거리 처리장 추천 목록 (가장 가까운 순서)")
     st.dataframe(
-        display_df[['고객사명', addr_col, '폐기물종류소분류', '운영파트너명', '차량종류', '월평균수거량', '작업량의 합계']],
+        top_facilities[['순위', '처리장명', '직선거리_km', '주소', '구분']],
         use_container_width=True
     )
-
-else:
-    st.info("👈 좌측 사이드바에서 보유하고 계신 엑셀 파일(.xlsx)을 업로드해주세요.")
